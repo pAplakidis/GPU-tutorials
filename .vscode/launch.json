@@ -1,0 +1,11 @@
+{
+  "configurations": [
+    {
+      "name": "CUDA: Debug with CUDA-GDB",
+      "type": "cuda-gdb",
+      "request": "launch",
+      "gdb": "/usr/bin/cuda-gdb",
+    }
+  ],
+  "version": "2.0.0"
+}
