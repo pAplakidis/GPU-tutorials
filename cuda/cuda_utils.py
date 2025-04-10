@@ -1,8 +1,11 @@
 import ctypes
 from typing import Tuple, List
 
-cuda = ctypes.CDLL('libcuda.so')
-nvrtc = ctypes.CDLL('libnvrtc.so')
+try:
+  cuda = ctypes.CDLL('libcuda.so')
+  nvrtc = ctypes.CDLL('libnvrtc.so')
+except OSError as e:
+  raise RuntimeError("Could not load CUDA libraries. Make sure CUDA is installed and the libraries are in your library path.") from e
 
 # CUDA driver API types and constants
 CUdevice = ctypes.c_int
@@ -60,8 +63,10 @@ CUDA_ERRORS = {
 }
 
 # TODO: generalize this to support multiple kernels
+# TODO: if debug == 2, print kernels + benchmarks (FLOPS, time, etc)
 class CudaManager:
-  def __init__(self):
+  def __init__(self, debug: int = 1):
+    self.debug = debug  # debug levels: 0: no debug, 1: basic debug, 2: kernel level
     self.ctx = CUcontext()
     self.module = None
     self.init_cuda()
@@ -99,14 +104,18 @@ class CudaManager:
   def  init_cuda(self):
     """Gets CUDA device and context, then initializes CUDA driver API."""
 
-    print("[CudaManager] Initializing...")
+    if self.debug == 1:
+      print("[CudaManager] Initializing...")
+
     self.check_cuda(cuda.cuInit(0), "cuInit")
     device = CUdevice() 
     self.check_cuda(cuda.cuDeviceGet(ctypes.byref(device), 0), "cuDeviceGet")
     self.check_cuda(cuda.cuCtxCreate(ctypes.byref(self.ctx), 0, device), "cuCtxCreate")
 
   def compile_kernel(self, src: str, kernel_name: str):
-    print(f"[CudaManager] Compiling kernel {kernel_name}")
+    if self.debug == 1:
+      print(f"[CudaManager] Compiling kernel {kernel_name}")
+
     program = nvrtcProgram()
     nvrtc.nvrtcCreateProgram.restype = nvrtcResult
     nvrtc.nvrtcCreateProgram(
@@ -138,7 +147,8 @@ class CudaManager:
     # get kernel function
     self.kfunc = CUfunction()
     self.check_cuda(cuda.cuModuleGetFunction(ctypes.byref(self.kfunc), self.module, ctypes.c_char_p(kernel_name)), "cuModuleGetFunction")
-    print("[CudaManager] Kernel function pointer:", self.kfunc)
+    if self.debug == 1:
+      print("[CudaManager] Kernel function pointer:", self.kfunc)
 
   def cuda_malloc(self, size: int) -> CUdeviceptr:
     """Allocates device memory and returns a pointer to it."""
@@ -168,7 +178,9 @@ class CudaManager:
     ):
     """Launches a CUDA kernel with the given grid and block dimensions and arguments."""
 
-    print(f"[CudaManager] Launching kernel {kfunc} with grid {grid} and block {block}")
+    if self.debug == 1:
+      print(f"[CudaManager] Launching kernel {kfunc} with grid {grid} and block {block}")
+
     arg_buff = (ctypes.c_void_p * len(args))(*[ctypes.addressof(a) for a in args])
     self.check_cuda(cuda.cuLaunchKernel(
       kfunc,
