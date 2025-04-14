@@ -2,7 +2,7 @@
 import os
 import ctypes
 import numpy as np
-from typing import Tuple
+from typing import Tuple, List
 
 from cuda_utils import CudaManager
 
@@ -24,6 +24,25 @@ class CudaBinaryOps:
     B_flat = B.ravel()
     return A_flat, B_flat
 
+  @staticmethod
+  def prep_kargs(
+    d_A: ctypes.c_void_p,
+    d_B: ctypes.c_void_p,
+    d_C: ctypes.c_void_p,
+    dim1: int,
+    dim2: int,
+    dim3: int
+  ) -> List[ctypes.c_void_p]:
+    """"Prepare kernel arguments."""
+    return [
+      ctypes.c_void_p(d_A.value),
+      ctypes.c_void_p(d_B.value),
+      ctypes.c_void_p(d_C.value),
+      ctypes.c_int(dim1),
+      ctypes.c_int(dim2),
+      ctypes.c_int(dim3)
+    ]
+
   def allocate_device_memory(self, A: np.ndarray, B: np.ndarray, C: np.ndarray) -> Tuple[ctypes.c_void_p, ctypes.c_void_p]:
     """Allocate device memory for tensors."""
     d_A = self.cm.cuda_malloc(A.nbytes)
@@ -41,32 +60,6 @@ class CudaBinaryOps:
     self.cm.cuda_free(d_A)
     self.cm.cuda_free(d_B)
     self.cm.cuda_free(d_C)
-
-  @staticmethod
-  def prep_kargs(
-    d_A: ctypes.c_void_p,
-    d_B: ctypes.c_void_p,
-    d_C: ctypes.c_void_p,
-    dim1: int,
-    dim2: int,
-    dim3: int
-  ) -> Tuple[
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_int
-]:
-    """"Prepare kernel arguments."""
-    return [
-      ctypes.c_void_p(d_A.value),
-      ctypes.c_void_p(d_B.value),
-      ctypes.c_void_p(d_C.value),
-      ctypes.c_int(dim1),
-      ctypes.c_int(dim2),
-      ctypes.c_int(dim3)
-    ]
 
   def add(self, A: np.ndarray, B: np.ndarray, block_size: Tuple = (8, 8, 8)) -> np.ndarray:
     """Add two homogeneous tensors of any dimension (1D, 2D, 3D) using CUDA."""
