@@ -43,6 +43,27 @@ class CudaBinaryOps:
       ctypes.c_int(dim3)
     ]
 
+  @staticmethod
+  def prep_kargs_conv2d(
+    d_in: ctypes.c_void_p,
+    d_kernel: ctypes.c_void_p,
+    d_out: ctypes.c_void_p,
+    input_height: int,
+    input_width: int,
+    kernel_height: int,
+    kernel_width: int
+  ) -> List[ctypes.c_void_p]:
+    """Prepare kernel arguments for 2D convolution."""
+    return [
+      ctypes.c_void_p(d_in.value),
+      ctypes.c_void_p(d_kernel.value),
+      ctypes.c_void_p(d_out.value),
+      ctypes.c_int(input_height),
+      ctypes.c_int(input_width),
+      ctypes.c_int(kernel_height),
+      ctypes.c_int(kernel_width)
+    ]
+
   def allocate_device_memory(self, A: np.ndarray, B: np.ndarray, C: np.ndarray) -> Tuple[ctypes.c_void_p, ctypes.c_void_p]:
     """Allocate device memory for tensors."""
     d_A = self.cm.cuda_malloc(A.nbytes)
@@ -93,7 +114,7 @@ class CudaBinaryOps:
     self.free_device_tensors(d_A, d_B, d_C)
     return C_flat.reshape(dims)
 
-  # TODO: batch matmul
+  # TODO: tensor cores
   def matmul(self, A: np.ndarray, B: np.ndarray, block_size: Tuple = (8, 8, 1)) -> np.ndarray:
     """Matrix multiplication using CUDA."""
     assert A.shape[1] == B.shape[0], "Inner dimensions must match"
@@ -122,6 +143,40 @@ class CudaBinaryOps:
     self.cm.memcpy_dtoh(C.ctypes.data, d_C, C.nbytes)
     self.free_device_tensors(d_A, d_B, d_C)
     return C
+
+  def conv2d(self, input: np.array, kernel: np.array, block_size = (16, 16, 1)) -> np.array:
+    assert input.ndim == 2, "Input must be a 2D array"
+    assert kernel.ndim == 2, "Kernel must be a 2D array"
+    assert input.dtype == np.float32, "Input must be of type float32"
+    assert kernel.dtype == np.float32, "Kernel must be of type float32"
+    assert kernel.shape[0] % 2 == 1 and kernel.shape[1] % 2 == 1, "Kernel dimensions must be odd"
+    assert kernel.shape[0] == kernel.shape[1], "Kernel must be square"
+    assert input.shape[0] >= kernel.shape[0] and input.shape[1] >= kernel.shape[1], "Input must be larger than or equal to kernel dimensions"
+
+    self.kernel_code = self.cm.load_kernel("kernels/conv2d.cu")
+    print(self.kernel_code)
+    self.cm.compile_kernel(self.kernel_code, b"conv2d_kernel")
+
+    input_height = input.shape[0]
+    input_width = input.shape[1]
+    kernel_height = kernel.shape[0]
+    kernel_width = kernel.shape[1]
+
+    output = np.zeros_like(input)
+    d_in, d_kernel, d_out = self.allocate_device_memory(input, kernel, output)
+    self.copy_data_to_device(d_in, d_kernel, input, kernel)
+  
+    grid = (
+      (input_width + block_size[0] - 1) // block_size[0],
+      (input_height + block_size[1] - 1) // block_size[1],
+      1,
+    )
+
+    args = self.prep_kargs_conv2d(d_in, d_kernel, d_out, input_height, input_width, kernel_height, kernel_width)
+    self.cm.launch_kernel(self.cm.kfunc, grid, block_size, args)
+    self.cm.memcpy_dtoh(output.ctypes.data, d_out, output.nbytes)
+    self.free_device_tensors(d_in, d_kernel, d_out)
+    return output
 
 
 if __name__ == "__main__":
@@ -160,3 +215,9 @@ if __name__ == "__main__":
   E_np = C_gpu + D
   assert np.allclose(E_gpu, E_np, atol=1e-4)
   print("[+] Add after matmul OK\n")
+
+  print("[*] Testing conv2d")
+  CONV_IN = np.random.rand(32, 32).astype(np.float32)
+  KERNEL = np.random.rand(3, 3).astype(np.float32)
+  CONV_OUT = CudaBinaryOps(debug=DEBUG).conv2d(CONV_IN, KERNEL)
+  print("[+] Conv2D OK\n")
